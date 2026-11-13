@@ -300,14 +300,27 @@ export async function acpTruncateSessionConversation(
 
 export async function acpForkSession(
   sessionId: string,
-  conversationBefore?: number
+  conversationBefore?: number,
+  conversationBeforeMessageId?: string,
+  conversationBeforeText?: string
 ): Promise<string> {
   const client = await getAcpClient();
   const sessionInfo = await client.goose.sessionInfo_unstable({ sessionId });
   const { cwd } = sessionInfo.session;
   const request: ForkSessionRequest = { sessionId, cwd };
-  if (conversationBefore !== undefined) {
-    request._meta = { conversationBefore };
+  // The id is authoritative; the event timestamp is stored in seconds and can be
+  // clamped on insert, and the text survives both of those problems, so the
+  // server can pick whichever identifies the edited message.
+  if (
+    conversationBefore !== undefined ||
+    conversationBeforeMessageId !== undefined ||
+    conversationBeforeText !== undefined
+  ) {
+    request._meta = {
+      ...(conversationBefore !== undefined ? { conversationBefore } : {}),
+      ...(conversationBeforeMessageId !== undefined ? { conversationBeforeMessageId } : {}),
+      ...(conversationBeforeText !== undefined ? { conversationBeforeText } : {}),
+    };
   }
   const response = await client.connection.agent.request(methods.agent.session.fork, request);
   return String(response.sessionId);

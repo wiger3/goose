@@ -87,6 +87,33 @@ async fn session_texts(session_manager: &SessionManager, session_id: &str) -> Ve
         .collect()
 }
 
+fn fork_meta(
+    timestamp: Option<i64>,
+    message_id: Option<&str>,
+    text: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut meta = serde_json::Map::new();
+    if let Some(timestamp) = timestamp {
+        meta.insert(
+            "conversationBefore".to_string(),
+            serde_json::Value::Number(timestamp.into()),
+        );
+    }
+    if let Some(message_id) = message_id {
+        meta.insert(
+            "conversationBeforeMessageId".to_string(),
+            serde_json::Value::String(message_id.to_string()),
+        );
+    }
+    if let Some(text) = text {
+        meta.insert(
+            "conversationBeforeText".to_string(),
+            serde_json::Value::String(text.to_string()),
+        );
+    }
+    meta
+}
+
 fn conversation_before_meta(timestamp: i64) -> serde_json::Map<String, serde_json::Value> {
     let mut meta = serde_json::Map::new();
     meta.insert(
@@ -165,6 +192,101 @@ fn fork_session_conversation_before_matches_rest_cutoff() {
         assert_eq!(
             session_texts(&session_manager, &session.id).await,
             vec!["first", "second", "third"]
+        );
+    });
+}
+
+async fn seed_messages_with_ids(
+    session_manager: &SessionManager,
+    cwd: &Path,
+    messages: &[(&str, i64, &str)],
+) -> goose::session::Session {
+    let session = session_manager
+        .create_session(
+            cwd.to_path_buf(),
+            "Fork boundary".to_string(),
+            SessionType::Acp,
+            GooseMode::default(),
+        )
+        .await
+        .unwrap();
+
+    for (text, created, message_id) in messages {
+        let mut message = Message::user().with_text(*text);
+        message.created = *created;
+        message.id = Some(message_id.to_string());
+        session_manager
+            .add_message(&session.id, &message)
+            .await
+            .unwrap();
+    }
+
+    session
+}
+
+#[test]
+fn fork_session_message_id_wins_over_ambiguous_timestamp() {
+    run_test(async {
+        let data_root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let session_manager = SessionManager::new(data_root.path().to_path_buf());
+        // Both messages share a second, so a timestamp cut cannot tell them apart.
+        let session = seed_messages_with_ids(
+            &session_manager,
+            cwd.path(),
+            &[
+                ("first", 1_718_000_000, "msg_first"),
+                ("second", 1_718_000_000, "msg_second"),
+            ],
+        )
+        .await;
+        let conn = new_connection(data_root.path()).await;
+
+        let response = fork_session_request(
+            &conn,
+            ForkSessionRequest::new(SessionId::new(session.id.clone()), cwd.path())
+                .meta(fork_meta(None, Some("msg_second"), None)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            session_texts(&session_manager, response.session_id.0.as_ref()).await,
+            vec!["first"]
+        );
+    });
+}
+
+#[test]
+fn fork_session_text_boundary_survives_timestamp_drift() {
+    run_test(async {
+        let data_root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let session_manager = SessionManager::new(data_root.path().to_path_buf());
+        let session = seed_messages_with_ids(
+            &session_manager,
+            cwd.path(),
+            &[
+                ("first", 1_718_000_000, "msg_first"),
+                ("second", 1_718_000_000, "msg_second"),
+            ],
+        )
+        .await;
+        let conn = new_connection(data_root.path()).await;
+
+        // The client's clock reports a later second than anything stored and it has
+        // no server message id: only the text identifies the message to replace.
+        let response = fork_session_request(
+            &conn,
+            ForkSessionRequest::new(SessionId::new(session.id.clone()), cwd.path())
+                .meta(fork_meta(Some(1_718_000_042), Some("local_abc123"), Some("second"))),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            session_texts(&session_manager, response.session_id.0.as_ref()).await,
+            vec!["first"]
         );
     });
 }

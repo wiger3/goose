@@ -2910,6 +2910,7 @@ impl SessionStorage {
 
         let mut builder = session_manager
             .update(&new_session.id)
+            .parent_session_id(Some(session_id.to_string()))
             .extension_data(original_session.extension_data)
             .schedule_id(original_session.schedule_id)
             .recipe(original_session.recipe)

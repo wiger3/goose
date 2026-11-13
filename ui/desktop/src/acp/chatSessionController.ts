@@ -102,7 +102,16 @@ async function forkSessionWithEditedMessage(
   editedMessage: string,
   editedImages: ImageData[]
 ): Promise<void> {
-  const targetSessionId = await acpForkSession(sessionId, message.created);
+  const editedText = message.content
+    .filter((content) => content.type === 'text')
+    .map((content) => content.text)
+    .join('');
+  const targetSessionId = await acpForkSession(
+    sessionId,
+    message.created,
+    message.id ?? undefined,
+    editedText
+  );
 
   const event = new CustomEvent(AppEvents.SESSION_FORKED, {
     detail: {
