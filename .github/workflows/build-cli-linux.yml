@@ -210,10 +210,38 @@ jobs:
             git \
             tar
 
+      - name: Bootstrap Rust toolchain (manylinux container)
+        if: matrix.container != ''
+        env:
+          TARGET: ${{ matrix.architecture }}-${{ matrix.target-suffix }}
+        run: |
+          # Hermit's tool cache is host-runner-scoped; inside the container we
+          # bootstrap rustup directly and let rust-toolchain.toml pin the channel.
+          # This must run before the cache step: Swatinem/rust-cache shells out to
+          # `rustc -vV` and silently restores and saves nothing when rustc is missing.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain none --profile minimal --no-modify-path
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          RUST_CHANNEL=$(grep '^channel' rust-toolchain.toml | cut -d'"' -f2)
+          if [ -z "$RUST_CHANNEL" ]; then
+            echo "Could not parse channel from rust-toolchain.toml" >&2
+            exit 1
+          fi
+          rustup toolchain install "$RUST_CHANNEL" --profile minimal \
+            --component rustc,cargo --target "$TARGET"
+          rustup show
+
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           key: ${{ matrix.architecture }}-${{ matrix.target-suffix }}-${{ matrix.build-on }}-${{ matrix.container || 'native' }}
+          # A release `target/` for this workspace is on the order of 2 GB and the
+          # repository cache budget is 10 GB, so caching one per matrix entry makes
+          # the entries evict each other. Keep compiled artifacts for the primary
+          # gnu build only; every target still gets the registry cache.
+          cache-targets: ${{ matrix.target-suffix == 'unknown-linux-gnu' && matrix.variant == 'standard' }}
+          cache-on-failure: true
 
       - name: Build CLI (host runner)
         if: matrix.container == ''
@@ -246,20 +274,8 @@ jobs:
         env:
           RUST_BACKTRACE: 1
         run: |
-          # Hermit's tool cache is host-runner-scoped; inside the container we
-          # bootstrap rustup directly and let rust-toolchain.toml pin the channel.
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain none --profile minimal --no-modify-path
           export PATH="$HOME/.cargo/bin:$PATH"
           TARGET="${{ matrix.architecture }}-${{ matrix.target-suffix }}"
-          RUST_CHANNEL=$(grep '^channel' rust-toolchain.toml | cut -d'"' -f2)
-          if [ -z "$RUST_CHANNEL" ]; then
-            echo "Could not parse channel from rust-toolchain.toml" >&2
-            exit 1
-          fi
-          rustup toolchain install "$RUST_CHANNEL" --profile minimal \
-            --component rustc,cargo --target "$TARGET"
-          rustup show
           cargo build --release --target "$TARGET" -p goose-cli --bin goose
 
       - name: Package CLI
