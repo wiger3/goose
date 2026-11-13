@@ -62,7 +62,10 @@ fn prompt_interactive_session_removal(sessions: &[Session]) -> Result<Vec<Sessio
         "Select sessions to delete (use spacebar, Enter to confirm, Ctrl+C to cancel):",
     );
 
-    let display_map: std::collections::HashMap<String, Session> = sessions
+    // Build the items in the order the caller supplied (newest activity first)
+    // and only then collect them into a map for lookup. Reading the map back
+    // would iterate a HashMap, whose order is randomized per process.
+    let items: Vec<(String, Session)> = sessions
         .iter()
         .map(|s| {
             let desc = if s.name.is_empty() {
@@ -82,9 +85,11 @@ fn prompt_interactive_session_removal(sessions: &[Session]) -> Result<Vec<Sessio
         })
         .collect();
 
-    for display_text in display_map.keys() {
+    for (display_text, _) in &items {
         selector = selector.item(display_text.clone(), display_text.clone(), "");
     }
+
+    let display_map: std::collections::HashMap<String, Session> = items.into_iter().collect();
 
     let selected_display_texts: Vec<String> = selector.interact()?;
 
@@ -452,7 +457,10 @@ pub async fn prompt_interactive_session_selection(
     let mut selector = select("Select a session");
 
     // Map to display text
-    let display_map: std::collections::HashMap<String, Session> = sessions
+    // Same as above: keep the incoming order (sorted by activity) instead of
+    // re-reading it from a HashMap, and show the same timestamp that the sort
+    // uses so the list is visibly ordered.
+    let items: Vec<(String, Session)> = sessions
         .iter()
         .map(|s| {
             let desc = if s.name.is_empty() {
@@ -462,15 +470,22 @@ pub async fn prompt_interactive_session_selection(
             };
             let truncated_desc = safe_truncate(desc, TRUNCATED_DESC_LENGTH);
 
-            let display_text = format!("{} - {} ({})", s.updated_at, truncated_desc, s.id);
+            let display_text = format!(
+                "{} - {} ({})",
+                session_activity_at(s),
+                truncated_desc,
+                s.id
+            );
             (display_text, s.clone())
         })
         .collect();
 
     // Add each session as an option
-    for display_text in display_map.keys() {
+    for (display_text, _) in &items {
         selector = selector.item(display_text.clone(), display_text.clone(), "");
     }
+
+    let display_map: std::collections::HashMap<String, Session> = items.into_iter().collect();
 
     // Add a cancel option
     let cancel_value = String::from("cancel");
