@@ -238,10 +238,18 @@ jobs:
           key: ${{ matrix.architecture }}-${{ matrix.target-suffix }}-${{ matrix.build-on }}-${{ matrix.container || 'native' }}
           # A release `target/` for this workspace is on the order of 2 GB and the
           # repository cache budget is 10 GB, so caching one per matrix entry makes
-          # the entries evict each other. Keep compiled artifacts for the primary
-          # gnu build only; every target still gets the registry cache.
-          cache-targets: ${{ matrix.target-suffix == 'unknown-linux-gnu' && matrix.variant == 'standard' }}
+          # the entries evict each other. sccache below caches per crate instead,
+          # shared by every target, so only the registry is cached here.
+          cache-targets: false
           cache-on-failure: true
+
+      - name: Set up sccache
+        uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba  # v0.0.11
+
+      - name: Enable sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: Build CLI (host runner)
         if: matrix.container == ''
