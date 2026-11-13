@@ -444,16 +444,28 @@ Another very long URL: https://www.example.com/very/long/path/with/many/segments
     });
   });
 
-  describe('KaTeX Math Rendering - singleDollarTextMath: false', () => {
-    it('treats single dollar signs as plain text', async () => {
+  describe('KaTeX Math Rendering - singleDollarTextMath with Pandoc-style guards', () => {
+    it('renders single dollar signs as inline math', async () => {
       const content = 'The formula $x_i$ represents the i-th element.';
 
       const { container } = renderWithIntl(<MarkdownContent content={content} />);
 
       await waitFor(() => {
-        const katexElements = container.querySelectorAll('.katex');
-        expect(katexElements.length).toBe(0);
-        expect(container).toHaveTextContent('$x_i$');
+        expect(container.querySelectorAll('.katex').length).toBeGreaterThan(0);
+        expect(container).not.toHaveTextContent('$x_i$');
+      });
+    });
+
+    it('treats dollars adjacent to whitespace as plain text (Pandoc semantics)', async () => {
+      const content =
+        "I'd like to buy this computer, but $1,000 is really expensive, I'll buy the one at $600 instead.";
+
+      const { container } = renderWithIntl(<MarkdownContent content={content} />);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.katex').length).toBe(0);
+        expect(container).toHaveTextContent('$1,000');
+        expect(container).toHaveTextContent('$600');
       });
     });
 

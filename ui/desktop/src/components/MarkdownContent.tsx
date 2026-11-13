@@ -27,6 +27,7 @@ const customOneDarkTheme = {
 };
 
 import { Check, Copy } from './icons';
+import { escapeNonMathDollars } from '../utils/dollarMath';
 import { wrapHTMLInCodeBlock } from '../utils/htmlSecurity';
 import { BLOCKED_PROTOCOLS } from '../utils/urlSecurity';
 import { getTextDirection } from '../utils/textDirection';
@@ -274,7 +275,7 @@ const MarkdownContent = memo(function MarkdownContent({
   const intl = useIntl();
   const processedContent = useMemo(() => {
     try {
-      return wrapHTMLInCodeBlock(content);
+      return escapeNonMathDollars(wrapHTMLInCodeBlock(content));
     } catch (error) {
       console.error('Error processing content:', error);
       return content;
@@ -319,7 +320,7 @@ const MarkdownContent = memo(function MarkdownContent({
     >
       <ReactMarkdown
         urlTransform={customUrlTransform}
-        remarkPlugins={[remarkGfm, remarkBreaks, [remarkMath, { singleDollarTextMath: false }]]}
+        remarkPlugins={[remarkGfm, remarkBreaks, [remarkMath, { singleDollarTextMath: true }]]}
         rehypePlugins={[
           [
             rehypeKatex,
