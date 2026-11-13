@@ -59,6 +59,7 @@ tar = { version = "0.4.46", default-features = false }
 reqwest = { workspace = true, features = ["blocking"] }
 zip = { workspace = true }
 bzip2 = { version = "0.6", default-features = false, features = ["default"] }
+flate2 = "1"
 webbrowser = { workspace = true }
 indicatif = { version = "0.18", default-features = false }
 tokio-util = { workspace = true, features = ["compat", "rt"] }

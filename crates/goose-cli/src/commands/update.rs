@@ -24,33 +24,33 @@ use std::process::Command;
 fn asset_name() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        "goose-aarch64-apple-darwin.tar.bz2"
+        "goose-aarch64-apple-darwin.tar.gz"
     }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
-        "goose-x86_64-apple-darwin.tar.bz2"
+        "goose-x86_64-apple-darwin.tar.gz"
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     {
-        "goose-x86_64-unknown-linux-gnu.tar.bz2"
+        "goose-x86_64-unknown-linux-gnu.tar.gz"
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
     {
-        "goose-aarch64-unknown-linux-gnu.tar.bz2"
+        "goose-aarch64-unknown-linux-gnu.tar.gz"
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "musl"))]
     {
-        "goose-x86_64-unknown-linux-musl.tar.bz2"
+        "goose-x86_64-unknown-linux-musl.tar.gz"
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "musl"))]
     {
-        "goose-aarch64-unknown-linux-musl.tar.bz2"
+        "goose-aarch64-unknown-linux-musl.tar.gz"
     }
     // RISC-V builds compile with this asset name, but update() rejects the
     // platform until release artifacts are published. See update() below.
     #[cfg(all(target_os = "linux", target_arch = "riscv64", target_env = "gnu"))]
     {
-        "goose-riscv64gc-unknown-linux-gnu.tar.bz2"
+        "goose-riscv64gc-unknown-linux-gnu.tar.gz"
     }
     #[cfg(all(target_os = "windows", target_arch = "x86_64", feature = "cuda"))]
     {
@@ -356,7 +356,7 @@ pub async fn update(canary: bool, reconfigure: bool) -> Result<()> {
         extract_zip(&bytes, tmp_dir.path())?;
 
         #[cfg(not(target_os = "windows"))]
-        extract_tar_bz2(&bytes, tmp_dir.path())?;
+        extract_tar(&bytes, tmp_dir.path())?;
 
         // --- Locate the binary in the extracted archive -------------------------
         let binary = binary_name();
@@ -445,14 +445,20 @@ fn validate_entry_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Extract a .tar.bz2 archive with path-traversal hardening (macOS / Linux).
+/// Extract a .tar.gz (or legacy .tar.bz2) archive with path-traversal hardening
+/// (macOS / Linux).
 ///
 /// Iterates entries individually, rejecting any entry whose path is absolute
 /// or contains `..` components (tar-slip protection).
 #[cfg(not(target_os = "windows"))]
-fn extract_tar_bz2(data: &[u8], dest: &Path) -> Result<()> {
-    use bzip2::read::BzDecoder;
-    let decoder = BzDecoder::new(data);
+fn extract_tar(data: &[u8], dest: &Path) -> Result<()> {
+    // Releases moved from .tar.bz2 to .tar.gz, so sniff the magic bytes instead
+    // of trusting the file name; updating from an older release keeps working.
+    let decoder: Box<dyn std::io::Read> = if data.starts_with(&[0x1f, 0x8b]) {
+        Box::new(flate2::read::GzDecoder::new(data))
+    } else {
+        Box::new(bzip2::read::BzDecoder::new(data))
+    };
     let mut archive = tar::Archive::new(decoder);
 
     for entry in archive.entries().context("Failed to read tar entries")? {
@@ -658,7 +664,7 @@ mod tests {
         #[cfg(target_os = "windows")]
         assert!(name.ends_with(".zip"));
         #[cfg(not(target_os = "windows"))]
-        assert!(name.ends_with(".tar.bz2"));
+        assert!(name.ends_with(".tar.gz"));
     }
 
     #[test]
@@ -959,7 +965,7 @@ mod tests {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn test_extract_tar_bz2_safe_archive() {
+    fn test_extract_tar_safe_archive() {
         use bzip2::write::BzEncoder;
         use bzip2::Compression;
 
@@ -981,7 +987,41 @@ mod tests {
             builder.into_inner().unwrap().finish().unwrap();
         }
 
-        extract_tar_bz2(&builder_buf, tmp.path()).unwrap();
+        extract_tar(&builder_buf, tmp.path()).unwrap();
+
+        let extracted = tmp.path().join("goose-package/goose");
+        assert!(extracted.exists());
+        assert_eq!(
+            fs::read_to_string(extracted).unwrap(),
+            "goose binary content"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_extract_tar_gz_safe_archive() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let tmp = tempdir().unwrap();
+
+        let mut builder_buf = Vec::new();
+        {
+            let encoder = GzEncoder::new(&mut builder_buf, Compression::default());
+            let mut builder = tar::Builder::new(encoder);
+
+            let data = b"goose binary content";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "goose-package/goose", &data[..])
+                .unwrap();
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+
+        extract_tar(&builder_buf, tmp.path()).unwrap();
 
         let extracted = tmp.path().join("goose-package/goose");
         assert!(extracted.exists());
@@ -1006,7 +1046,7 @@ mod tests {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn test_extract_tar_bz2_blocks_symlink_escape() {
+    fn test_extract_tar_blocks_symlink_escape() {
         use bzip2::write::BzEncoder;
         use bzip2::Compression;
 
@@ -1028,7 +1068,7 @@ mod tests {
             builder.into_inner().unwrap().finish().unwrap();
         }
 
-        let result = extract_tar_bz2(&builder_buf, tmp.path());
+        let result = extract_tar(&builder_buf, tmp.path());
         assert!(
             result.is_err(),
             "extraction should fail when a symlink target escapes the destination"

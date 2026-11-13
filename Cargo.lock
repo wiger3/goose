@@ -4197,6 +4197,7 @@ dependencies = [
  "console",
  "env-lock",
  "etcetera",
+ "flate2",
  "fs2",
  "futures",
  "goose",

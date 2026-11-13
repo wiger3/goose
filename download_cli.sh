@@ -185,7 +185,7 @@ echo "Detected OS: $OS with ARCH $ARCH"
 
 # Build the filename and URL for the stable release
 if [ "$OS" = "darwin" ]; then
-  FILE="goose-$ARCH-apple-darwin.tar.bz2"
+  FILE="goose-$ARCH-apple-darwin.tar.gz"
   EXTRACT_CMD="tar"
 elif [ "$OS" = "windows" ]; then
   case "$GOOSE_WINDOWS_VARIANT" in
@@ -214,11 +214,11 @@ else
       exit 1
       ;;
   esac
-  FILE="goose-$ARCH-unknown-linux-gnu.tar.bz2"
+  FILE="goose-$ARCH-unknown-linux-gnu.tar.gz"
   if [ "$GOOSE_LINUX_VARIANT" = "vulkan" ]; then
-    FILE="goose-$ARCH-unknown-linux-gnu-vulkan.tar.bz2"
+    FILE="goose-$ARCH-unknown-linux-gnu-vulkan.tar.gz"
   elif [ "$GOOSE_LINUX_VARIANT" = "musl" ]; then
-    FILE="goose-$ARCH-unknown-linux-musl.tar.bz2"
+    FILE="goose-$ARCH-unknown-linux-musl.tar.gz"
   fi
   EXTRACT_CMD="tar"
 fi
@@ -264,16 +264,12 @@ echo "Extracting $FILE to temporary directory..."
 set +e  # Disable immediate exit on error
 
 if [ "$EXTRACT_CMD" = "tar" ]; then
-  tar -xjf "$FILE" -C "$TMP_DIR" 2> tar_error.log
+  tar -xzf "$FILE" -C "$TMP_DIR" 2> tar_error.log
   extract_exit_code=$?
 
   # Check for tar errors
   if [ $extract_exit_code -ne 0 ]; then
-    if grep -iEq "missing.*bzip2|bzip2.*missing|bzip2.*No such file|No such file.*bzip2" tar_error.log; then
-      echo "Error: Failed to extract $FILE. 'bzip2' is required but not installed. See details below:"
-    else
-      echo "Error: Failed to extract $FILE. See details below:"
-    fi
+    echo "Error: Failed to extract $FILE. See details below:"
     cat tar_error.log
     rm tar_error.log
     exit 1
