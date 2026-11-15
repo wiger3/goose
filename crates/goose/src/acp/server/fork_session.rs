@@ -25,15 +25,16 @@ impl AcpConnection {
         let cwd = effective_session_cwd(self.session_cwd.as_deref(), &args.cwd);
         validate_absolute_cwd(&cwd)?;
 
-        let mut base_name = source.name.trim();
-        while let Some(stripped) = base_name.strip_suffix("(copy)") {
-            base_name = stripped.trim();
-        }
-        let fork_name = if base_name.is_empty() {
-            "(copy)".to_string()
-        } else {
-            format!("{base_name} (copy)")
-        };
+        let all_sessions = self
+            .services
+            .session_manager
+            .list_all_sessions()
+            .await
+            .internal_err()?;
+        let fork_name = next_fork_name(
+            &source.name,
+            all_sessions.iter().map(|session| session.name.as_str()),
+        );
 
         let new_session = self
             .services
@@ -213,6 +214,65 @@ fn message_text(message: &crate::conversation::message::Message) -> String {
     text
 }
 
+/// Splits `foo (copy 3)` into `("foo", 3)`, `foo (copy)` into `("foo", 1)`, and
+/// anything else into `(name, 0)`.
+fn split_fork_name(name: &str) -> (String, usize) {
+    let trimmed = name.trim();
+    let Some(inner_start) = trimmed
+        .strip_suffix(')')
+        .and_then(|rest| rest.rfind('('))
+    else {
+        return (trimmed.to_string(), 0);
+    };
+
+    let inner = trimmed[inner_start + 1..trimmed.len() - 1].trim();
+    let base = trimmed[..inner_start].trim();
+
+    let version = if inner == "copy" {
+        1
+    } else {
+        match inner.strip_prefix("copy") {
+            Some(rest) if rest.starts_with(' ') => rest.trim().parse::<usize>().unwrap_or(0),
+            _ => 0,
+        }
+    };
+
+    if version == 0 {
+        (trimmed.to_string(), 0)
+    } else {
+        (base.to_string(), version)
+    }
+}
+
+/// Next free name in the `base (copy)`, `base (copy 2)`, ... series, so forks
+/// of the same conversation are numbered instead of all sharing one name.
+fn next_fork_name<'a>(
+    source_name: &str,
+    existing_names: impl Iterator<Item = &'a str>,
+) -> String {
+    let (base, _) = split_fork_name(source_name);
+    let highest = existing_names
+        .filter_map(|name| {
+            let (other_base, version) = split_fork_name(name);
+            (other_base == base && version > 0).then_some(version)
+        })
+        .max()
+        .unwrap_or(0);
+
+    let version = highest + 1;
+    let suffix = if version == 1 {
+        "(copy)".to_string()
+    } else {
+        format!("(copy {version})")
+    };
+
+    if base.is_empty() {
+        suffix
+    } else {
+        format!("{base} {suffix}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +293,60 @@ mod tests {
         let mut meta = Meta::new();
         meta.insert("conversationBeforeText".to_string(), value);
         meta
+    }
+
+    #[test]
+    fn split_fork_name_recognises_copy_suffixes() {
+        assert_eq!(split_fork_name("original"), ("original".to_string(), 0));
+        assert_eq!(
+            split_fork_name("original (copy)"),
+            ("original".to_string(), 1)
+        );
+        assert_eq!(
+            split_fork_name("original (copy 2)"),
+            ("original".to_string(), 2)
+        );
+        assert_eq!(
+            split_fork_name("original (copy 17)"),
+            ("original".to_string(), 17)
+        );
+        assert_eq!(
+            split_fork_name("original (copyright)"),
+            ("original (copyright)".to_string(), 0)
+        );
+        assert_eq!(split_fork_name("(copy 2)"), (String::new(), 2));
+    }
+
+    #[test]
+    fn next_fork_name_numbers_siblings() {
+        let next = |source: &str, existing: &[&str]| {
+            next_fork_name(source, existing.iter().copied())
+        };
+
+        assert_eq!(next("original", &[]), "original (copy)");
+        assert_eq!(next("original", &["original"]), "original (copy)");
+        assert_eq!(
+            next("original", &["original", "original (copy)"]),
+            "original (copy 2)"
+        );
+        assert_eq!(
+            next(
+                "original",
+                &["original", "original (copy)", "original (copy 2)"]
+            ),
+            "original (copy 3)"
+        );
+        // Forking a copy continues the same series instead of nesting "(copy)".
+        assert_eq!(
+            next("original (copy)", &["original", "original (copy)"]),
+            "original (copy 2)"
+        );
+        // Unrelated names and other bases do not affect the counter.
+        assert_eq!(
+            next("original", &["other (copy 9)", "original draft"]),
+            "original (copy)"
+        );
+        assert_eq!(next("", &["(copy)"]), "(copy 2)");
     }
 
     #[test]
