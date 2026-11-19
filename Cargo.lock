@@ -4163,7 +4163,7 @@ dependencies = [
 
 [[package]]
 name = "goose-acp-types"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -6655,7 +6655,7 @@ dependencies = [
 
 [[package]]
 name = "oi-kit-agent"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6695,7 +6695,7 @@ dependencies = [
 
 [[package]]
 name = "oi-kit-bindings"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -6711,7 +6711,7 @@ dependencies = [
 
 [[package]]
 name = "oi-kit-context-management"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6727,7 +6727,7 @@ dependencies = [
 
 [[package]]
 name = "oi-kit-download-manager"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -6739,7 +6739,7 @@ dependencies = [
 
 [[package]]
 name = "oi-kit-local-inference"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -6773,7 +6773,7 @@ dependencies = [
 
 [[package]]
 name = "oi-kit-provider-types"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -6805,7 +6805,7 @@ dependencies = [
 
 [[package]]
 name = "oi-kit-providers"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "anyhow",
  "async-stream",
