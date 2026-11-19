@@ -37,6 +37,11 @@ const i18n = defineMessages({
     id: 'onboardingGuard.retry',
     defaultMessage: 'Retry',
   },
+  // Reuses the settings label so first-run users land on the same switch.
+  useExternalBackend: {
+    id: 'externalBackendSection.useExternalServer',
+    defaultMessage: 'Use external backend',
+  },
 });
 
 const TELEMETRY_CONFIG_KEY = 'GOOSE_TELEMETRY_ENABLED';
@@ -100,8 +105,44 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
     setIsCheckingProvider(false);
   };
 
+  // The provider check only makes sense for a locally spawned backend. When the
+  // user has pointed goose at a remote server (or explicitly skipped onboarding),
+  // the provider lives on that server and blocking here is a dead end: /settings
+  // is nested under this guard, so there is no way to reach the external backend
+  // switch without first configuring a provider for the bundled CLI.
+  const isOnboardingBypassed = async (): Promise<boolean> => {
+    try {
+      const [externalGoosed, onboardingDismissed] = await Promise.all([
+        window.electron.getSetting('externalGoosed'),
+        window.electron.getSetting('onboardingDismissed'),
+      ]);
+      return Boolean(externalGoosed?.enabled || onboardingDismissed);
+    } catch (error) {
+      console.error('Failed to read onboarding settings:', error);
+      return false;
+    }
+  };
+
+  const skipOnboarding = async () => {
+    try {
+      await window.electron.setSetting('onboardingDismissed', true);
+    } catch (error) {
+      console.error('Failed to persist onboarding skip:', error);
+    }
+    setHasProvider(true);
+    setIsCheckingProvider(false);
+    navigate('/settings', { state: { section: 'sharing' } });
+  };
+
   useEffect(() => {
-    checkProvider();
+    (async () => {
+      if (await isOnboardingBypassed()) {
+        setHasProvider(true);
+        setIsCheckingProvider(false);
+        return;
+      }
+      await checkProvider();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -195,6 +236,16 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
               onConfigured={handleConfigured}
               onFirstSelection={() => setHasSelection(true)}
             />
+
+            <div className="mt-6 text-center">
+              <button
+                type="button"
+                className="text-sm text-text-muted underline underline-offset-4 hover:text-text-default"
+                onClick={skipOnboarding}
+              >
+                {intl.formatMessage(i18n.useExternalBackend)}
+              </button>
+            </div>
           </div>
         </div>
       </div>

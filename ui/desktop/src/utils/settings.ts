@@ -40,6 +40,9 @@ export interface Settings {
   // Desktop app settings
   showMenuBarIcon: boolean;
   disableAutoDownload: boolean;
+  // Skips the first-run provider onboarding (useful when the backend is remote
+  // and its provider is configured server-side).
+  onboardingDismissed: boolean;
   showDockIcon: boolean;
   enableWakelock: boolean;
   enableNotifications: boolean;
@@ -80,6 +83,7 @@ export const defaultSettings: Settings = {
   // Desktop app settings
   showMenuBarIcon: true,
   disableAutoDownload: false,
+  onboardingDismissed: false,
   showDockIcon: true,
   enableWakelock: false,
   enableNotifications: true,

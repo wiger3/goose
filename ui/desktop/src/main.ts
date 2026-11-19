@@ -980,6 +980,11 @@ function getRegularWindows(): BrowserWindow[] {
 
 const gooseServeLeases = new GooseServeLeaseRegistry(log);
 
+// Set when a backend could not be reached while opening a window. The window is
+// still created so the renderer can show backend setup instead of quitting with
+// a modal dialog — this app is usable with a remote backend only.
+let backendStartupError: string | null = null;
+
 const windowPowerSaveBlockers = new Map<number, number>(); // windowId -> blockerId
 // Track pending initial messages per window
 const pendingInitialMessages = new Map<number, string>(); // windowId -> initialMessage
@@ -1013,6 +1018,7 @@ const createChat = async (
     recipeParameters,
   } = options;
   const settings = getSettings();
+  backendStartupError = null;
 
   let externalBackend: ExternalBackend | null;
   try {
@@ -1088,31 +1094,11 @@ const createChat = async (
       });
       if (!externalBackendCheck.ok) {
         externalCertificateTrust?.release();
-        log.error(`External backend check failed: ${externalBackendCheck.failure}`);
-        const canDisableExternalBackend = externalBackend.source === 'settings';
-        const response = dialog.showMessageBoxSync({
-          type: 'error',
-          title: 'External Backend Unreachable',
-          message: `Could not connect to external backend at ${externalBaseUrl}`,
-          detail: externalBackendCheck.failure ?? undefined,
-          buttons: canDisableExternalBackend
-            ? ['Disable External Backend & Retry', 'Quit']
-            : ['Quit'],
-          defaultId: 0,
-          cancelId: canDisableExternalBackend ? 1 : 0,
-        });
-
-        if (canDisableExternalBackend && response === 0) {
-          updateSettings((s) => {
-            if (s.externalGoosed) {
-              s.externalGoosed.enabled = false;
-            }
-          });
-          return createChat(app, options);
-        }
-
-        app.quit();
-        return;
+        throw new Error(
+          `Could not connect to external backend at ${externalBaseUrl}: ${
+            externalBackendCheck.failure ?? 'unknown error'
+          }`
+        );
       }
 
       const resolvedAcpUrl = externalBackendCheck.acpUrl;
@@ -1129,38 +1115,17 @@ const createChat = async (
       });
     } catch (error) {
       externalCertificateTrust?.release();
-      log.error('External ACP backend is misconfigured', error);
-      const canDisableExternalBackend = externalBackend.source === 'settings';
-      const response = dialog.showMessageBoxSync({
-        type: 'error',
-        title: 'External Backend Misconfigured',
-        message: 'The external backend URL is invalid.',
-        detail: errorMessage(error),
-        buttons: canDisableExternalBackend
-          ? ['Disable External Backend & Retry', 'Quit']
-          : ['Quit'],
-        defaultId: 0,
-        cancelId: canDisableExternalBackend ? 1 : 0,
-      });
-
-      if (canDisableExternalBackend && response === 0) {
-        updateSettings((s) => {
-          if (s.externalGoosed) {
-            s.externalGoosed.enabled = false;
-          }
-        });
-        return createChat(app, options);
-      }
-
-      app.quit();
-      return;
+      // No local fallback exists in this build: keep the window and let the
+      // renderer show backend setup with the failure attached.
+      log.error('External ACP backend is unreachable or misconfigured', error);
+      backendStartupError = errorMessage(error);
     }
   } else {
     const localCertificateTrust = trustBackendCertificate('127.0.0.1', null);
 
     const loginShellPath = await getLoginShellPath(log);
 
-    let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
+    let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>> | null = null;
     try {
       gooseServeResult = await startGooseServe({
         serverSecret,
@@ -1194,32 +1159,25 @@ const createChat = async (
       localCertificateTrust.trust.fingerprint = localCertFingerprint;
     } catch (error) {
       localCertificateTrust.release();
+      // A desktop build may ship without the CLI (client-only). Treat a missing
+      // or failing local backend the same as an unreachable remote one.
       log.error('goose serve failed to start', error);
-      dialog.showMessageBoxSync({
-        type: 'error',
-        title: 'Goose Failed to Start',
-        message: 'The backend server failed to start.',
-        detail: [
-          'Backend: goose serve',
-          'Readiness check: HTTPS GET /status',
-          `Startup error:\n${errorMessage(error)}`,
-        ].join('\n\n'),
-        buttons: ['OK'],
-      });
-      app.quit();
-      return;
+      backendStartupError = errorMessage(error);
+      gooseServeResult = null;
     }
 
-    workingDir = gooseServeResult.workingDir;
-    const cleanupGooseServe = gooseServeResult.cleanup;
-    gooseServeResult.cleanup = async () => {
-      try {
-        await cleanupGooseServe();
-      } finally {
-        localCertificateTrust.release();
-      }
-    };
-    gooseServeLease = gooseServeLeases.create(gooseServeResult, serverSecret);
+    if (gooseServeResult) {
+      workingDir = gooseServeResult.workingDir;
+      const cleanupGooseServe = gooseServeResult.cleanup;
+      gooseServeResult.cleanup = async () => {
+        try {
+          await cleanupGooseServe();
+        } finally {
+          localCertificateTrust.release();
+        }
+      };
+      gooseServeLease = gooseServeLeases.create(gooseServeResult, serverSecret);
+    }
   }
 
   const cleanupUnregisteredGooseServeLease = async () => {
@@ -1928,6 +1886,7 @@ const validSettingKeys: Set<string> = new Set([
   'enableWakelock',
   'enableNotifications',
   'spellcheckEnabled',
+  'onboardingDismissed',
   'externalGoosed',
   'globalShortcut',
   'keyboardShortcuts',
@@ -1987,6 +1946,71 @@ ipcMain.handle('get-acp-url', async (event) => {
     return null;
   }
   return gooseServeLeases.getAcpUrl(windowId) ?? null;
+});
+
+ipcMain.handle('get-backend-error', () => backendStartupError);
+
+// Connects the calling window to the external backend from the current settings
+// and attaches the resulting lease, so the renderer can reload into a working
+// app without restarting Electron.
+ipcMain.handle('backend-connect', async (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    return { ok: false, error: 'No window to attach the backend to.' };
+  }
+
+  let backend: ExternalBackend | null;
+  try {
+    backend = getActiveExternalBackend(getSettings());
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) };
+  }
+
+  if (!backend) {
+    return { ok: false, error: 'No external backend is configured.' };
+  }
+
+  const windowId = window.id;
+  let certificateTrust: BackendCertificateTrustRegistration | null = null;
+  try {
+    const baseUrl = normalizeAcpHttpBaseUrl(backend.url);
+    const base = new URL(baseUrl);
+    if (base.protocol === 'https:') {
+      certificateTrust = trustBackendCertificate(base.hostname, backend.certFingerprint ?? null);
+    }
+
+    const check = await connectRemoteBackend({
+      baseUrl,
+      serverSecret: backend.secret,
+      pinnedHostname: backend.certFingerprint ? base.hostname : null,
+    });
+
+    if (!check.ok || !check.acpUrl) {
+      certificateTrust?.release();
+      return {
+        ok: false,
+        error: check.ok ? 'Backend did not expose an ACP endpoint.' : (check.failure ?? 'Backend unreachable.'),
+      };
+    }
+
+    const originLease = leaseBackendOrigin(check.acpUrl);
+    const trustLease = certificateTrust;
+    certificateTrust = null;
+    const lease = gooseServeLeases.createExternal(check.acpUrl, backend.secret, async () => {
+      originLease.release();
+      trustLease?.release();
+    });
+
+    window.once('closed', () => {
+      void gooseServeLeases.releaseWindow(windowId);
+    });
+    gooseServeLeases.attachWindow(windowId, lease);
+    backendStartupError = null;
+    return { ok: true, acpUrl: check.acpUrl };
+  } catch (error) {
+    certificateTrust?.release();
+    return { ok: false, error: errorMessage(error) };
+  }
 });
 
 // Handle menu bar icon visibility

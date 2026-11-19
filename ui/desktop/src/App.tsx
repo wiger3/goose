@@ -14,6 +14,7 @@ import { toast, ToastContainer } from 'react-toastify';
 import AnnouncementModal from './components/AnnouncementModal';
 import TelemetryConsentPrompt from './components/TelemetryConsentPrompt';
 import OnboardingGuard from './components/onboarding/OnboardingGuard';
+import BackendGate from './components/backend/BackendGate';
 import { createSession } from './sessions';
 import { acpListSessions, acpDeleteSession } from './acp/sessions';
 import { acpChatSessionStore } from './acp/chatSessionStore';
@@ -689,13 +690,15 @@ export default function App() {
   return (
     <ThemeProvider>
       <FeaturesProvider>
-        <ModelAndProviderProvider>
-          <HashRouter>
-            <AppInner />
-          </HashRouter>
-          <AnnouncementModal />
-          <TelemetryConsentPrompt />
-        </ModelAndProviderProvider>
+        <BackendGate>
+          <ModelAndProviderProvider>
+            <HashRouter>
+              <AppInner />
+            </HashRouter>
+            <AnnouncementModal />
+            <TelemetryConsentPrompt />
+          </ModelAndProviderProvider>
+        </BackendGate>
       </FeaturesProvider>
     </ThemeProvider>
   );
