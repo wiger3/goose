@@ -1,4 +1,5 @@
 use crate::config::paths::Paths;
+use crate::config::Config;
 use anyhow::{anyhow, Context, Result};
 use fs_err::File;
 use oi_kit_providers::request_log::{install_logger, RequestLogHandle, RequestLogger};
@@ -49,11 +50,44 @@ pub fn get_model(data: &Value) -> String {
 
 pub const LOGS_TO_KEEP: usize = 10;
 
+/// Request logging is opt-in. Each file holds the full provider payload — system
+/// prompt, whole conversation, tool schemas — and every provider call writes one,
+/// so it is both the largest thing goose writes to disk and a privacy hazard on a
+/// shared machine. It is also coupled to the request path: if the log directory
+/// becomes unwritable, the `start_log()`/`write()` calls fail the provider request
+/// outright. Opt in with `GOOSE_REQUEST_LOG=1` (environment or config).
+const REQUEST_LOG_KEY: &str = "GOOSE_REQUEST_LOG";
+
+fn truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn request_log_enabled() -> bool {
+    // The environment is read directly: `Config::get_param` parses env values as
+    // JSON first, so the obvious `GOOSE_REQUEST_LOG=1` would arrive as a number and
+    // fail to deserialize into a bool or a string.
+    if let Ok(raw) = std::env::var(REQUEST_LOG_KEY) {
+        return truthy(&raw);
+    }
+
+    Config::global()
+        .get_param::<bool>(REQUEST_LOG_KEY)
+        .unwrap_or(false)
+}
+
 static INIT_LOGGER: OnceLock<Result<()>> = OnceLock::new();
 
 pub fn init_goose_request_log() -> Result<()> {
     INIT_LOGGER
-        .get_or_init(|| Ok(install_logger(RequestLog::new(LOGS_TO_KEEP)?)?))
+        .get_or_init(|| {
+            if !request_log_enabled() {
+                return Ok(());
+            }
+            Ok(install_logger(RequestLog::new(LOGS_TO_KEEP)?)?)
+        })
         .as_ref()
         .map_err(|e| anyhow::anyhow!("failed to set up logger: {}", e))?;
     Ok(())
